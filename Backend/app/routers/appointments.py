@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.appointment import Appointment
@@ -8,21 +9,24 @@ from app.dependencies import get_current_user
 from datetime import date, timedelta
 from app.services.user_services import verify_user
 from app.services.patient_services import search_patient
-from app.services.attendance_services import search_attendance
 from app.services.appointment_services import create_appointment_function, search_appointment, is_time_available
 
 router = APIRouter(prefix="/appointments", tags=["Appointments"])
+
+error_interno = HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error del servidor")
+usuario_no_encontrado = HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario No encontrado")
 
 class CommonParams:
     def __init__(self, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
         self.db = db
         self.current_user = current_user
 
+
+
 @router.post("/", response_model=AppointmentSchema)
 async def create_appointment(appointment_data: AppointmentCreate, 
                              common: CommonParams = Depends(), 
                              ):
-    verify_user(common.current_user)
 
     return create_appointment_function(common.db, appointment_data, common.current_user["id"])
 
@@ -33,23 +37,18 @@ async def get_appointment_by_day(selected_date: date,
                                  attended: bool = None,  
                                  common: CommonParams = Depends()):
     
-    verify_user(common.current_user)
-
-    query = (
-        common.db.query(Appointment)
-        .filter(
+    stmt = (
+        select(Appointment).where(
             Appointment.date >= selected_date, 
             Appointment.date < selected_date + timedelta(days=1), 
             Appointment.psychologist_id == common.current_user["id"]
         )
     )
 
-    
     if attended is not None:
+        stmt = stmt.join(Attendance).where(Attendance.attended == attended)
 
-        query = query.join(Attendance).filter(Attendance.attended == attended)
-    
-    appointments = query.offset(offset).limit(limit).all()
+    appointments = common.db.scalars(stmt.offset(offset).limit(limit)).all()
     
     return appointments
 
@@ -57,7 +56,6 @@ async def get_appointment_by_day(selected_date: date,
 async def get_appointments_by_date_range(start_date: date, end_date: date, 
                                          common: CommonParams = Depends(),
                                          skip: int = 0, limit: int = 10, attended: bool = None):
-    verify_user(common.current_user)
 
     query = (
         common.db.query(Appointment)
@@ -71,13 +69,20 @@ async def get_appointments_by_date_range(start_date: date, end_date: date,
     appointments = query.offset(skip).limit(limit).all()
     return appointments
 
-@router.get("/{patient_id}/{appointment_id}", response_model=AppointmentSchema)
-async def get_appointment(appointment_id: int,
-                          patient_id: int,  
+@router.get("/{appointment_id}", response_model=AppointmentSchema, status_code=status.HTTP_200_OK)
+async def get_appointment(appointment_id: int,  
                           common: CommonParams = Depends()):
-    verify_user(common.current_user)
 
-    return search_appointment(common.db, "id", appointment_id, patient_id, common.current_user["id"])
+    appointment = search_appointment(common.db, appointment_id, common.current_user["id"])
+
+    if appointment:
+        try:
+            return appointment
+        except:
+            raise error_interno
+    
+    return usuario_no_encontrado
+    
 
 @router.get("/{patient_id}", response_model=list[AppointmentSchema])
 async def get_appointments_by_patient(patient_id: int,

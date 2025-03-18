@@ -1,25 +1,15 @@
 from fastapi import HTTPException, status
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
 from app.models.appointment import Appointment
 from app.schemas.appointment import AppointmentCreate
 from datetime import datetime, timedelta
 
-def search_appointment(db: Session, key: str, value: any, patient_id: int, current_user_id: int, exists: bool = False) -> Appointment|bool:
-    # si exists = True entonces retornara un boleano, si exists es False, retornara el usuario o una exepcion
-    expresion = {key: value, "patient_id": patient_id, "psychologist_id": current_user_id}
-    appointment = db.query(Appointment).filter_by(**expresion).first()
-    if exists:
-        if not appointment:
-            return False
-        else:
-            return True
-    else:
-        if not appointment:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Appointment not found or does not belong to the psychologist/patient")
-        
-        return appointment
+def search_appointment(db: Session, appointment_id: int, current_user_id: int) -> Appointment:
+
+    return db.scalar(select(Appointment).where(Appointment.psychologist_id == current_user_id, Appointment.id == appointment_id))
+    
     
 def create_appointment_function(db: Session, appointment_data: AppointmentCreate, current_user_id: int):
 
